@@ -26,6 +26,25 @@ def format_duration(seconds):
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
 
+def get_cookie_file():
+    # 1. Check if a local cookies.txt file exists in the directory
+    local_cookies = os.path.join(os.path.dirname(__file__), "cookies.txt")
+    if os.path.exists(local_cookies):
+        return local_cookies
+    
+    # 2. Check if cookies are passed via environment variables (very useful for Render/Railway)
+    env_cookies = os.environ.get("YT_COOKIES")
+    if env_cookies:
+        temp_cookies_path = os.path.join(tempfile.gettempdir(), "ytdl_cookies.txt")
+        try:
+            with open(temp_cookies_path, "w", encoding="utf-8") as f:
+                f.write(env_cookies.strip())
+            return temp_cookies_path
+        except Exception as e:
+            logger.error(f"Error saving YT_COOKIES environment variable to file: {e}")
+            
+    return None
+
 class YouTubeDownloader:
     @staticmethod
     def get_video_info(url: str) -> dict:
@@ -36,7 +55,19 @@ class YouTubeDownloader:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
+            # Prioritize mobile player clients which have fewer restrictions on server IPs
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'web']
+                }
+            }
         }
+        
+        cookiefile = get_cookie_file()
+        if cookiefile:
+            ydl_opts['cookiefile'] = cookiefile
+            logger.info(f"Using cookies from: {cookiefile}")
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=False)
@@ -175,7 +206,17 @@ class YouTubeDownloader:
             'outtmpl': outtmpl,
             'quiet': True,
             'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'web']
+                }
+            }
         }
+
+        cookiefile = get_cookie_file()
+        if cookiefile:
+            ydl_opts['cookiefile'] = cookiefile
+            logger.info(f"Using cookies from: {cookiefile}")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
