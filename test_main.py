@@ -2,12 +2,13 @@ import os
 import tempfile
 import pytest
 from unittest.mock import patch
-from fastapi.testclient import TestClient
-
-# Import app to be tested
 from main import app
 
-client = TestClient(app)
+@pytest.fixture
+def client():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client
 
 @pytest.fixture
 def mock_video_info():
@@ -49,41 +50,41 @@ def mock_video_info():
         }
     }
 
-def test_serve_frontend():
+def test_serve_frontend(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert "StreamVault" in response.text or "YouTube Video Downloader API" in response.text
+    assert b"StreamVault" in response.data or b"YouTube Video Downloader API" in response.data
 
 @patch('main.YouTubeDownloader.get_video_info')
-def test_get_info_success(mock_get_info, mock_video_info):
+def test_get_info_success(mock_get_info, client, mock_video_info):
     mock_get_info.return_value = mock_video_info
     
     url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     response = client.get(f"/api/info?url={url}")
     
     assert response.status_code == 200
-    data = response.json()
+    data = response.get_json()
     assert data['title'] == 'Test Video Title'
     assert data['id'] == 'test_id_123'
     assert len(data['formats']['combined']) == 1
     mock_get_info.assert_called_once_with(url)
 
-def test_get_info_empty_url():
+def test_get_info_empty_url(client):
     response = client.get("/api/info?url=   ")
     assert response.status_code == 400
-    assert response.json()["detail"] == "URL parameter cannot be empty."
+    assert response.get_json()["detail"] == "URL parameter cannot be empty."
 
 @patch('main.YouTubeDownloader.get_video_info')
-def test_get_info_failure(mock_get_info):
+def test_get_info_failure(mock_get_info, client):
     mock_get_info.side_effect = ValueError("Could not retrieve video information.")
     
     response = client.get("/api/info?url=https://invalid-url.com")
     
     assert response.status_code == 400
-    assert "Could not retrieve video information" in response.json()["detail"]
+    assert "Could not retrieve video information" in response.get_json()["detail"]
 
 @patch('main.YouTubeDownloader.download_format')
-def test_download_video_success(mock_download_format):
+def test_download_video_success(mock_download_format, client):
     # Create a dummy temporary file to be served
     temp_dir = tempfile.gettempdir()
     dummy_filepath = os.path.join(temp_dir, "ytdl_dummy_test.mp4")
@@ -98,19 +99,79 @@ def test_download_video_success(mock_download_format):
     response = client.get(f"/api/download?url={url}&format_id={format_id}")
     
     assert response.status_code == 200
-    assert response.content == b"dummy video content"
+    assert response.data == b"dummy video content"
     assert "content-disposition" in response.headers
     assert 'filename="test_video.mp4"' in response.headers["content-disposition"]
     
     mock_download_format.assert_called_once_with(url, format_id)
     
-    # Under FastAPI's TestClient, background tasks run synchronously.
-    # Therefore, the temporary file is already deleted by cleanup_temp_file.
+    # Verify the temporary file is deleted by the generator's finally block after streaming.
     assert not os.path.exists(dummy_filepath)
 
-def test_download_video_missing_params():
+def test_download_video_missing_params(client):
     response = client.get("/api/download?url=https://youtube.com/watch&format_id=")
     assert response.status_code == 400
     
     response = client.get("/api/download?url=&format_id=18")
     assert response.status_code == 400
+
+# Tests for the new Flask endpoints requested by the user
+
+@patch('main.YouTubeDownloader.get_video_info_simple')
+def test_post_video_info_success(mock_get_simple, client):
+    mock_get_simple.return_value = {
+        "title": "Test Video",
+        "author": "Test Author",
+        "length": 180,
+        "views": 1000,
+        "description": "Test Desc",
+        "publish_date": "2026-06-22"
+    }
+    
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    response = client.post("/video_info", json={"url": url})
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["title"] == "Test Video"
+    assert data["author"] == "Test Author"
+    mock_get_simple.assert_called_once_with(url)
+
+def test_post_video_info_missing_url(client):
+    response = client.post("/video_info", json={})
+    assert response.status_code == 400
+    assert "Missing 'url' parameter" in response.get_json()["error"]
+
+def test_post_video_info_invalid_url(client):
+    response = client.post("/video_info", json={"url": "http://invalid-url"})
+    assert response.status_code == 400
+    assert "Invalid YouTube URL" in response.get_json()["error"]
+
+@patch('main.YouTubeDownloader.get_available_resolutions')
+def test_post_available_resolutions_success(mock_get_resolutions, client):
+    mock_get_resolutions.return_value = {
+        "progressive": ["360p", "720p"],
+        "all": ["360p", "720p", "1080p"]
+    }
+    
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    response = client.post("/available_resolutions", json={"url": url})
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["progressive"] == ["360p", "720p"]
+    assert data["all"] == ["360p", "720p", "1080p"]
+    mock_get_resolutions.assert_called_once_with(url)
+
+@patch('main.YouTubeDownloader.download_by_resolution')
+def test_post_download_by_resolution_success(mock_download_by_res, client):
+    mock_download_by_res.return_value = (True, None)
+    
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    response = client.post("/download/1080p", json={"url": url})
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "downloaded successfully" in data["message"]
+    # Verify parameter passing
+    mock_download_by_res.assert_called_once()

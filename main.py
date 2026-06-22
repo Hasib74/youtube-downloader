@@ -1,110 +1,156 @@
 import os
+import re
 import logging
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
+from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask_cors import CORS
 from downloader import YouTubeDownloader
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="YouTube Video Downloader API",
-    description="A robust FastAPI backend for downloading YouTube videos and audio files.",
-    version="1.0.0"
-)
+app = Flask(__name__)
+CORS(app)  # Enable CORS for public deployment
 
-# Enable CORS for public deployment
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Ensure downloads and static directories exist
+DOWNLOADS_DIR = os.path.join(os.path.dirname(__file__), "downloads")
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-# Helper function to delete temporary files after serving them
-def cleanup_temp_file(filepath: str):
+# Helper function to check valid YouTube URL
+def is_valid_youtube_url(url):
+    if not url:
+        return False
+    # Matches: youtube.com/watch?v=..., youtu.be/..., youtube.com/shorts/..., youtube.com/embed/..., m.youtube.com/...
+    pattern = r"^(https?://)?(www\.|m\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?[\w-]+(&\S*)?$"
+    return re.match(pattern, url.strip()) is not None
+
+# Flask equivalent of GET /
+@app.route('/')
+def serve_frontend():
+    return send_from_directory('static', 'index.html')
+
+# Flask equivalent of GET /static/<path:path>
+@app.route('/static/<path:path>')
+def serve_static(path):
+    return send_from_directory('static', path)
+
+# User's requested route: POST /video_info
+@app.route('/video_info', methods=['POST'])
+def video_info():
+    data = request.get_json() or {}
+    url = data.get('url')
+    
+    if not url:
+        return jsonify({"error": "Missing 'url' parameter in the request body."}), 400
+
+    if not is_valid_youtube_url(url):
+        return jsonify({"error": "Invalid YouTube URL."}), 400
+    
     try:
-        if os.path.exists(filepath):
-            os.remove(filepath)
-            logger.info(f"Successfully cleaned up temporary file: {filepath}")
+        info = YouTubeDownloader.get_video_info_simple(url)
+        return jsonify(info), 200
     except Exception as e:
-        logger.error(f"Error deleting file {filepath}: {e}")
+        logger.error(f"Error in /video_info: {e}")
+        return jsonify({"error": str(e)}), 500
 
-@app.get("/api/info")
-async def get_info(url: str = Query(..., description="The YouTube video URL")):
-    if not url.strip():
-        raise HTTPException(status_code=400, detail="URL parameter cannot be empty.")
+# User's requested route: POST /available_resolutions
+@app.route('/available_resolutions', methods=['POST'])
+def available_resolutions():
+    data = request.get_json() or {}
+    url = data.get('url')
+    
+    if not url:
+        return jsonify({"error": "Missing 'url' parameter in the request body."}), 400
+
+    if not is_valid_youtube_url(url):
+        return jsonify({"error": "Invalid YouTube URL."}), 400
+    
+    try:
+        resolutions = YouTubeDownloader.get_available_resolutions(url)
+        return jsonify(resolutions), 200
+    except Exception as e:
+        logger.error(f"Error in /available_resolutions: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# User's requested route: POST /download/<resolution>
+@app.route('/download/<resolution>', methods=['POST'])
+def download_by_resolution(resolution):
+    data = request.get_json() or {}
+    url = data.get('url')
+    
+    if not url:
+        return jsonify({"error": "Missing 'url' parameter in the request body."}), 400
+
+    if not is_valid_youtube_url(url):
+        return jsonify({"error": "Invalid YouTube URL."}), 400
+    
+    try:
+        # Download on the server in `./downloads/{video_id}`
+        success, error_message = YouTubeDownloader.download_by_resolution(url, resolution, DOWNLOADS_DIR)
+        if success:
+            return jsonify({"message": f"Video with resolution {resolution} downloaded successfully."}), 200
+        else:
+            return jsonify({"error": error_message}), 500
+    except Exception as e:
+        logger.error(f"Error in /download/<resolution>: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Frontend compatibility route: GET /api/info
+@app.route('/api/info', methods=['GET'])
+def api_info():
+    url = request.args.get('url')
+    if not url or not url.strip():
+        return jsonify({"detail": "URL parameter cannot be empty."}), 400
+    
     try:
         info = YouTubeDownloader.get_video_info(url)
-        return info
+        return jsonify(info), 200
     except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        return jsonify({"detail": str(ve)}), 400
     except Exception as e:
         logger.error(f"Unexpected error in /api/info: {e}")
-        raise HTTPException(status_code=500, detail=f"An error occurred while fetching video info: {str(e)}")
+        return jsonify({"detail": f"An error occurred while fetching video info: {str(e)}"}), 500
 
-@app.get("/api/download")
-async def download_video(
-    url: str = Query(..., description="The YouTube video URL"),
-    format_id: str = Query(..., description="The specific format ID to download"),
-    background_tasks: BackgroundTasks = None
-):
-    if not url.strip() or not format_id.strip():
-        raise HTTPException(status_code=400, detail="URL and format_id parameters are required.")
+# Frontend compatibility route: GET /api/download
+@app.route('/api/download', methods=['GET'])
+def api_download():
+    url = request.args.get('url')
+    format_id = request.args.get('format_id')
+    
+    if not url or not url.strip() or not format_id or not format_id.strip():
+        return jsonify({"detail": "URL and format_id parameters are required."}), 400
     
     try:
         filepath, filename = YouTubeDownloader.download_format(url, format_id)
         
-        # Schedule the file to be deleted once the response has been sent
-        if background_tasks:
-            background_tasks.add_task(cleanup_temp_file, filepath)
-        else:
-            # Fallback if background_tasks is somehow missing (e.g. direct test calls)
-            logger.warning("BackgroundTasks not provided, file will not be automatically deleted")
-            
-        return FileResponse(
-            path=filepath,
-            filename=filename,
-            media_type="application/octet-stream",
-            headers={"Access-Control-Expose-Headers": "Content-Disposition"}
+        # Generator that streams file and then deletes it
+        def generate():
+            try:
+                with open(filepath, 'rb') as f:
+                    while chunk := f.read(8192):
+                        yield chunk
+            finally:
+                try:
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                        logger.info(f"Successfully cleaned up temporary file: {filepath}")
+                except Exception as e:
+                    logger.error(f"Error deleting file {filepath}: {e}")
+        
+        response = app.response_class(
+            generate(),
+            mimetype="application/octet-stream"
         )
+        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+        return response
     except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        return jsonify({"detail": str(ve)}), 400
     except FileNotFoundError as fnf:
-        raise HTTPException(status_code=404, detail=str(fnf))
+        return jsonify({"detail": str(fnf)}), 404
     except Exception as e:
         logger.error(f"Unexpected error in /api/download: {e}")
-        raise HTTPException(status_code=500, detail=f"An error occurred during the download: {str(e)}")
+        return jsonify({"detail": f"An error occurred during the download: {str(e)}"}), 500
 
-# Mount static files directory
-static_dir = os.path.join(os.path.dirname(__file__), "static")
-os.makedirs(static_dir, exist_ok=True)
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-@app.get("/", response_class=HTMLResponse)
-async def serve_frontend():
-    index_path = os.path.join(static_dir, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return """
-    <html>
-        <head>
-            <title>Downloader API</title>
-            <style>
-                body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #121212; color: white; }
-                .container { text-align: center; border: 1px solid #333; padding: 40px; border-radius: 8px; background-color: #1e1e1e; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>YouTube Video Downloader API</h1>
-                <p>Backend is running successfully!</p>
-                <p>Frontend static files (static/index.html) are not yet generated.</p>
-            </div>
-        </body>
-    </html>
-    """
+if __name__ == '__main__':
+    app.run(debug=True, host="0.0.0.0", port=8000)

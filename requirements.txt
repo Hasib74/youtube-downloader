@@ -1,5 +1,5 @@
-fastapi==0.111.0
-uvicorn[standard]==0.30.1
+flask==3.0.3
+flask-cors==4.0.1
 yt-dlp>=2024.5.27
 pytest==8.2.2
 httpx==0.27.0

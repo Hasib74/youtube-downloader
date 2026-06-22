@@ -35,10 +35,12 @@ def get_cookie_file():
     # 2. Check if cookies are passed via environment variables (very useful for Render/Railway)
     env_cookies = os.environ.get("YT_COOKIES")
     if env_cookies:
+        logger.info(f"YT_COOKIES env variable found. Length: {len(env_cookies)} chars, Lines: {len(env_cookies.splitlines())}")
         temp_cookies_path = os.path.join(tempfile.gettempdir(), "ytdl_cookies.txt")
         try:
             with open(temp_cookies_path, "w", encoding="utf-8") as f:
                 f.write(env_cookies.strip())
+            logger.info(f"Saved YT_COOKIES to temporary path: {temp_cookies_path}")
             return temp_cookies_path
         except Exception as e:
             logger.error(f"Error saving YT_COOKIES environment variable to file: {e}")
@@ -246,3 +248,177 @@ class YouTubeDownloader:
                 raise FileNotFoundError(f"Could not locate the downloaded file on the server.")
 
             return actual_filepath, os.path.basename(actual_filepath)
+
+    @staticmethod
+    def get_video_info_simple(url: str) -> dict:
+        """
+        Extracts simple metadata for a given YouTube URL.
+        """
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'web']
+                }
+            }
+        }
+        cookiefile = get_cookie_file()
+        if cookiefile:
+            ydl_opts['cookiefile'] = cookiefile
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=False)
+            except Exception as e:
+                logger.error(f"Failed to fetch video info: {e}")
+                raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+
+        # Format upload_date (YYYYMMDD to YYYY-MM-DD)
+        upload_date = info.get('upload_date')
+        if upload_date and len(upload_date) == 8:
+            formatted_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:]}"
+        else:
+            formatted_date = upload_date
+
+        return {
+            "title": info.get('title'),
+            "author": info.get('uploader') or info.get('channel') or "Unknown",
+            "length": info.get('duration'),
+            "views": info.get('view_count'),
+            "description": info.get('description'),
+            "publish_date": formatted_date,
+        }
+
+    @staticmethod
+    def get_available_resolutions(url: str) -> dict:
+        """
+        Extracts available progressive and adaptive resolutions for a YouTube URL.
+        """
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'web']
+                }
+            }
+        }
+        cookiefile = get_cookie_file()
+        if cookiefile:
+            ydl_opts['cookiefile'] = cookiefile
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=False)
+            except Exception as e:
+                logger.error(f"Failed to fetch video info: {e}")
+                raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+
+        formats = info.get('formats', [])
+        progressive_resolutions = set()
+        all_resolutions = set()
+
+        for f in formats:
+            # Check if format has resolution/height
+            height = f.get('height')
+            if not height:
+                continue
+            
+            res_str = f"{height}p"
+            all_resolutions.add(res_str)
+
+            # Progressive means it contains both video and audio
+            vcodec = f.get('vcodec', 'none')
+            acodec = f.get('acodec', 'none')
+            if vcodec != 'none' and acodec != 'none':
+                progressive_resolutions.add(res_str)
+
+        def sort_resolutions(res_list):
+            def get_height(res_str):
+                try:
+                    return int(res_str.replace('p', ''))
+                except ValueError:
+                    return 0
+            return sorted(list(res_list), key=get_height)
+
+        return {
+            "progressive": sort_resolutions(progressive_resolutions),
+            "all": sort_resolutions(all_resolutions)
+        }
+
+    @staticmethod
+    def download_by_resolution(url: str, resolution: str, base_download_dir: str) -> tuple[bool, str]:
+        """
+        Downloads a video with the specified resolution to a server folder.
+        Saves it inside: base_download_dir/{video_id}/
+        """
+        try:
+            # 1. Fetch metadata first to get video_id
+            ydl_opts_info = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'ios', 'web']
+                    }
+                }
+            }
+            cookiefile = get_cookie_file()
+            if cookiefile:
+                ydl_opts_info['cookiefile'] = cookiefile
+
+            with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                info = ydl.extract_info(url, download=False)
+            
+            video_id = info.get('id', 'unknown')
+            out_dir = os.path.join(base_download_dir, video_id)
+            os.makedirs(out_dir, exist_ok=True)
+
+            # 2. Setup download options
+            # If resolution ends with 'p', extract height.
+            height = None
+            if resolution and resolution.endswith('p'):
+                try:
+                    height = int(resolution[:-1])
+                except ValueError:
+                    pass
+
+            # Setup format selection
+            if height:
+                # Select bestvideo with specified height + bestaudio, merging them into mp4.
+                # Fallback to general best if height is not found.
+                format_sel = f"bestvideo[height={height}]+bestaudio/best[height={height}]/best"
+            elif resolution == 'audio':
+                format_sel = "bestaudio/best"
+            else:
+                format_sel = "bestvideo+bestaudio/best"
+
+            outtmpl = os.path.join(out_dir, "%(title)s.%(ext)s")
+            
+            ydl_opts = {
+                'format': format_sel,
+                'outtmpl': outtmpl,
+                'quiet': True,
+                'no_warnings': True,
+                'merge_output_format': 'mp4',  # Ensure output is mp4 if merging
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'ios', 'web']
+                    }
+                }
+            }
+            
+            if cookiefile:
+                ydl_opts['cookiefile'] = cookiefile
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            return True, None
+        except Exception as e:
+            logger.error(f"Download by resolution failed: {e}")
+            return False, str(e)
