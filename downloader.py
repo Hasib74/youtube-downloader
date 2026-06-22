@@ -47,6 +47,26 @@ def get_cookie_file():
             
     return None
 
+def get_youtube_extractor_args() -> dict:
+    yt_args = {
+        'player_client': ['android', 'ios', 'web']
+    }
+    
+    po_token = os.environ.get("YT_PO_TOKEN")
+    visitor_data = os.environ.get("YT_VISITOR_DATA")
+    
+    if po_token:
+        if '+' not in po_token:
+            po_token = f"web+{po_token}"
+        yt_args['po_token'] = [po_token]
+        logger.info("YT_PO_TOKEN env variable injected into extractor args.")
+        
+    if visitor_data:
+        yt_args['visitor_data'] = [visitor_data]
+        logger.info("YT_VISITOR_DATA env variable injected into extractor args.")
+        
+    return {'youtube': yt_args}
+
 class YouTubeDownloader:
     @staticmethod
     def get_video_info(url: str) -> dict:
@@ -57,12 +77,7 @@ class YouTubeDownloader:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            # Prioritize mobile player clients which have fewer restrictions on server IPs
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios', 'web']
-                }
-            }
+            'extractor_args': get_youtube_extractor_args()
         }
         
         cookiefile = get_cookie_file()
@@ -208,11 +223,7 @@ class YouTubeDownloader:
             'outtmpl': outtmpl,
             'quiet': True,
             'no_warnings': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios', 'web']
-                }
-            }
+            'extractor_args': get_youtube_extractor_args()
         }
 
         cookiefile = get_cookie_file()
@@ -258,11 +269,7 @@ class YouTubeDownloader:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios', 'web']
-                }
-            }
+            'extractor_args': get_youtube_extractor_args()
         }
         cookiefile = get_cookie_file()
         if cookiefile:
@@ -300,11 +307,7 @@ class YouTubeDownloader:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios', 'web']
-                }
-            }
+            'extractor_args': get_youtube_extractor_args()
         }
         cookiefile = get_cookie_file()
         if cookiefile:
@@ -361,11 +364,7 @@ class YouTubeDownloader:
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': False,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'ios', 'web']
-                    }
-                }
+                'extractor_args': get_youtube_extractor_args()
             }
             cookiefile = get_cookie_file()
             if cookiefile:
@@ -405,11 +404,7 @@ class YouTubeDownloader:
                 'quiet': True,
                 'no_warnings': True,
                 'merge_output_format': 'mp4',  # Ensure output is mp4 if merging
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'ios', 'web']
-                    }
-                }
+                'extractor_args': get_youtube_extractor_args()
             }
             
             if cookiefile:
