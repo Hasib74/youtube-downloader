@@ -34,6 +34,39 @@ def serve_frontend():
 def serve_static(path):
     return send_from_directory('static', path)
 
+# Debug route to inspect environment variables and yt-dlp version on the server
+@app.route('/api/debug', methods=['GET'])
+def api_debug():
+    import sys
+    import yt_dlp
+    import shutil
+    
+    yt_cookies_env = os.environ.get("YT_COOKIES")
+    cookie_info = "Not Set"
+    if yt_cookies_env:
+        lines = yt_cookies_env.splitlines()
+        cookie_info = {
+            "exists": True,
+            "length": len(yt_cookies_env),
+            "line_count": len(lines),
+            "starts_with": yt_cookies_env[:30] if len(yt_cookies_env) > 0 else "",
+            "contains_tabs": "\t" in yt_cookies_env,
+            "contains_spaces": "  " in yt_cookies_env,
+        }
+        
+    local_cookies_exists = os.path.exists(os.path.join(os.path.dirname(__file__), "cookies.txt"))
+    
+    return jsonify({
+        "python_version": sys.version,
+        "yt_dlp_version": yt_dlp.version.__version__,
+        "ffmpeg_available": shutil.which('ffmpeg') is not None or shutil.which('ffprobe') is not None,
+        "YT_COOKIES": cookie_info,
+        "local_cookies_txt_exists": local_cookies_exists,
+        "YT_PO_TOKEN_exists": os.environ.get("YT_PO_TOKEN") is not None,
+        "YT_VISITOR_DATA_exists": os.environ.get("YT_VISITOR_DATA") is not None,
+        "YT_PROXY_exists": os.environ.get("YT_PROXY") is not None,
+    }), 200
+
 # User's requested route: POST /video_info
 @app.route('/video_info', methods=['POST'])
 def video_info():
