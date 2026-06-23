@@ -37,21 +37,43 @@ def get_cookie_file():
     env_cookies = os.environ.get("YT_COOKIES")
     if env_cookies:
         logger.info(f"YT_COOKIES env variable found. Length: {len(env_cookies)} chars, Lines: {len(env_cookies.splitlines())}")
+        
+        # Sanitize cookies: convert sequences of spaces back to tabs if they got converted during copy-paste.
+        # Python's MozillaCookieJar strictly requires tab-separated fields.
+        import re
+        sanitized_lines = []
+        for line in env_cookies.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                sanitized_lines.append("")
+                continue
+            if stripped.startswith("#") and not stripped.startswith("#HttpOnly_"):
+                sanitized_lines.append(line)
+                continue
+            # Replace 2 or more spaces or tabs with a single tab character to repair tab-to-space conversions
+            repaired = re.sub(r'[ \t]{2,}', '\t', line)
+            sanitized_lines.append(repaired)
+            
         temp_cookies_path = os.path.join(tempfile.gettempdir(), "ytdl_cookies.txt")
         try:
-            with open(temp_cookies_path, "w", encoding="utf-8") as f:
-                f.write(env_cookies.strip())
-            logger.info(f"Saved YT_COOKIES to temporary path: {temp_cookies_path}")
+            with open(temp_cookies_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write("\n".join(sanitized_lines).strip() + "\n")
+            logger.info(f"Saved and sanitized YT_COOKIES to temporary path: {temp_cookies_path}")
             return temp_cookies_path
         except Exception as e:
             logger.error(f"Error saving YT_COOKIES environment variable to file: {e}")
             
     return None
 
-def get_youtube_extractor_args() -> dict:
-    yt_args = {
-        'player_client': ['android', 'ios', 'web']
-    }
+def get_youtube_extractor_args(has_cookies: bool = False) -> dict:
+    yt_args = {}
+    
+    # If cookies are present, we MUST prioritize/use 'web' or 'mweb' client.
+    # Mobile clients like 'android' or 'ios' ignore web cookies, leading to bot check failures.
+    if has_cookies:
+        yt_args['player_client'] = ['web', 'mweb']
+    else:
+        yt_args['player_client'] = ['android', 'ios', 'web']
     
     po_token = os.environ.get("YT_PO_TOKEN")
     visitor_data = os.environ.get("YT_VISITOR_DATA")
@@ -69,14 +91,16 @@ def get_youtube_extractor_args() -> dict:
     return {'youtube': yt_args}
 
 def get_ydl_opts(extra_opts=None) -> dict:
+    cookiefile = get_cookie_file()
+    has_cookies = cookiefile is not None
+    
     opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'extractor_args': get_youtube_extractor_args(),
+        'extractor_args': get_youtube_extractor_args(has_cookies),
     }
     
-    cookiefile = get_cookie_file()
     if cookiefile:
         opts['cookiefile'] = cookiefile
         
