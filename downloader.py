@@ -2,6 +2,7 @@ import os
 import uuid
 import tempfile
 import logging
+import shutil
 import yt_dlp
 
 logger = logging.getLogger(__name__)
@@ -67,24 +68,36 @@ def get_youtube_extractor_args() -> dict:
         
     return {'youtube': yt_args}
 
+def get_ydl_opts(extra_opts=None) -> dict:
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'noplaylist': True,
+        'extractor_args': get_youtube_extractor_args(),
+    }
+    
+    cookiefile = get_cookie_file()
+    if cookiefile:
+        opts['cookiefile'] = cookiefile
+        
+    proxy = os.environ.get("YT_PROXY")
+    if proxy:
+        opts['proxy'] = proxy
+        logger.info(f"Using proxy: {proxy.split('@')[-1] if '@' in proxy else proxy}")
+        
+    if extra_opts:
+        opts.update(extra_opts)
+        
+    return opts
+
 class YouTubeDownloader:
     @staticmethod
     def get_video_info(url: str) -> dict:
         """
         Extracts metadata and formats for a given YouTube URL.
         """
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'extractor_args': get_youtube_extractor_args()
-        }
+        ydl_opts = get_ydl_opts({'extract_flat': False})
         
-        cookiefile = get_cookie_file()
-        if cookiefile:
-            ydl_opts['cookiefile'] = cookiefile
-            logger.info(f"Using cookies from: {cookiefile}")
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=False)
@@ -194,42 +207,50 @@ class YouTubeDownloader:
         if not download_dir:
             download_dir = tempfile.gettempdir()
 
+        # Check if ffmpeg is available
+        ffmpeg_available = shutil.which('ffmpeg') is not None or shutil.which('ffprobe') is not None
+
+        # Fetch metadata first to check if format is video-only
+        ydl_opts_info = get_ydl_opts({'extract_flat': False})
+        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+            try:
+                info = ydl.extract_info(url, download=False)
+            except Exception as e:
+                logger.error(f"Failed to fetch video info for download: {e}")
+                raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+
+        # Check if requested format_id is video-only
+        formats = info.get('formats', [])
+        is_video_only = False
+        for f in formats:
+            if f.get('format_id') == format_id:
+                vcodec = f.get('vcodec', 'none')
+                acodec = f.get('acodec', 'none')
+                if vcodec != 'none' and acodec == 'none':
+                    is_video_only = True
+                break
+
+        # Decide format selection and output extension/merging configuration
+        if is_video_only and ffmpeg_available:
+            format_sel = f"{format_id}+bestaudio/best"
+            logger.info(f"Format {format_id} is video-only. Merging with bestaudio using ffmpeg.")
+        else:
+            format_sel = format_id
+            if is_video_only and not ffmpeg_available:
+                logger.warning(f"Format {format_id} is video-only, but ffmpeg is not available. Downloading video-only stream without audio.")
+
         unique_id = str(uuid.uuid4())[:8]
         # We prefix the file name with a short unique ID to avoid collision on the server
         outtmpl = os.path.join(download_dir, f"ytdl_{unique_id}_%(title)s.%(ext)s")
 
-        # Set up yt-dlp options
-        # If it's a video-only format, try to request format_id + bestaudio so the downloaded file is complete.
-        # yt-dlp handles merging using ffmpeg automatically if ffmpeg is on the PATH.
-        # We can pass format = f"{format_id}+bestaudio/best" or just format_id if it's combined or audio-only.
-        # To make it simple, we check if the requested format_id is video-only by querying metadata,
-        # but a cleaner fallback is f"{format_id}+bestaudio/best" for video formats, or just let yt-dlp handle it.
-        # Let's specify:
-        # format: "format_id+bestaudio/best" if we want to merge, or format_id if it is already combined/audio.
-        # Let's try downloading format_id. If the user wants to download exactly what they requested,
-        # they might want video-only. However, typically users selecting "video only" on a public website expect it to merge with audio.
-        # Let's design it so:
-        # If it's a format_id containing only video, we use `format_id+bestaudio/best` (so they get audio too).
-        # Otherwise, just `format_id`.
-        # To determine if format_id is video-only, we can search the formats. Or we can just pass
-        # the format directly. Let's make it flexible:
-        # Let's default to downloading exactly the format_id. If we want to offer audio merging, we can handle it in main.py
-        # or download it directly.
-        # Let's use format_id, but if it fails or if it's video-only, we can let yt-dlp try to merge.
-        # Actually, let's just download the exact format_id requested. If they want video+audio, they can choose from the combined list.
-        # This keeps the dependencies simple and avoids strict ffmpeg requirement for basic usage!
-        ydl_opts = {
-            'format': format_id,
-            'outtmpl': outtmpl,
-            'quiet': True,
-            'no_warnings': True,
-            'extractor_args': get_youtube_extractor_args()
+        ydl_opts_config = {
+            'format': format_sel,
+            'outtmpl': outtmpl
         }
+        if is_video_only and ffmpeg_available:
+            ydl_opts_config['merge_output_format'] = 'mp4'
 
-        cookiefile = get_cookie_file()
-        if cookiefile:
-            ydl_opts['cookiefile'] = cookiefile
-            logger.info(f"Using cookies from: {cookiefile}")
+        ydl_opts = get_ydl_opts(ydl_opts_config)
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -239,7 +260,6 @@ class YouTubeDownloader:
                 raise ValueError(f"Download failed. Details: {str(e)}")
             
             # Find the actual filepath of the downloaded file.
-            # Usually prepare_filename works, but if merging happens it might change extension (e.g. mp4 -> mkv).
             filename = ydl.prepare_filename(info)
             actual_filepath = filename
 
@@ -265,15 +285,7 @@ class YouTubeDownloader:
         """
         Extracts simple metadata for a given YouTube URL.
         """
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'extractor_args': get_youtube_extractor_args()
-        }
-        cookiefile = get_cookie_file()
-        if cookiefile:
-            ydl_opts['cookiefile'] = cookiefile
+        ydl_opts = get_ydl_opts({'extract_flat': False})
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -303,15 +315,7 @@ class YouTubeDownloader:
         """
         Extracts available progressive and adaptive resolutions for a YouTube URL.
         """
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'extractor_args': get_youtube_extractor_args()
-        }
-        cookiefile = get_cookie_file()
-        if cookiefile:
-            ydl_opts['cookiefile'] = cookiefile
+        ydl_opts = get_ydl_opts({'extract_flat': False})
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -360,16 +364,8 @@ class YouTubeDownloader:
         """
         try:
             # 1. Fetch metadata first to get video_id
-            ydl_opts_info = {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': False,
-                'extractor_args': get_youtube_extractor_args()
-            }
-            cookiefile = get_cookie_file()
-            if cookiefile:
-                ydl_opts_info['cookiefile'] = cookiefile
-
+            ydl_opts_info = get_ydl_opts({'extract_flat': False})
+            
             with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
                 info = ydl.extract_info(url, download=False)
             
@@ -386,30 +382,38 @@ class YouTubeDownloader:
                 except ValueError:
                     pass
 
+            # Check if ffmpeg is available
+            ffmpeg_available = shutil.which('ffmpeg') is not None or shutil.which('ffprobe') is not None
+
             # Setup format selection
             if height:
-                # Select bestvideo with specified height + bestaudio, merging them into mp4.
-                # Fallback to general best if height is not found.
-                format_sel = f"bestvideo[height={height}]+bestaudio/best[height={height}]/best"
+                if ffmpeg_available:
+                    format_sel = f"bestvideo[height={height}]+bestaudio/best[height={height}]/best"
+                else:
+                    # Without ffmpeg, we cannot merge. Fall back to combined best format up to height
+                    format_sel = f"best[height<={height}]/best"
             elif resolution == 'audio':
-                format_sel = "bestaudio/best"
+                if ffmpeg_available:
+                    format_sel = "bestaudio/best"
+                else:
+                    format_sel = "best"
             else:
-                format_sel = "bestvideo+bestaudio/best"
+                if ffmpeg_available:
+                    format_sel = "bestvideo+bestaudio/best"
+                else:
+                    format_sel = "best"
 
             outtmpl = os.path.join(out_dir, "%(title)s.%(ext)s")
             
-            ydl_opts = {
+            ydl_opts_config = {
                 'format': format_sel,
                 'outtmpl': outtmpl,
-                'quiet': True,
-                'no_warnings': True,
-                'merge_output_format': 'mp4',  # Ensure output is mp4 if merging
-                'extractor_args': get_youtube_extractor_args()
             }
+            if ffmpeg_available and resolution != 'audio':
+                ydl_opts_config['merge_output_format'] = 'mp4'
+                
+            ydl_opts = get_ydl_opts(ydl_opts_config)
             
-            if cookiefile:
-                ydl_opts['cookiefile'] = cookiefile
-
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
