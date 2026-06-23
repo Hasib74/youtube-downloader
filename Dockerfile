@@ -1,9 +1,10 @@
 FROM python:3.10-slim
 
-# Install system dependencies (including ffmpeg for merging high-quality formats)
+# Install system dependencies (including ffmpeg for merging and nodejs for signature decryption)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
+    nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
