@@ -219,25 +219,35 @@ class YouTubeDownloader:
                 logger.error(f"Failed to fetch video info for download: {e}")
                 raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
 
-        # Check if requested format_id is video-only
+        # Check if requested format_id is available
         formats = info.get('formats', [])
-        is_video_only = False
+        matched_format = None
         for f in formats:
             if f.get('format_id') == format_id:
-                vcodec = f.get('vcodec', 'none')
-                acodec = f.get('acodec', 'none')
-                if vcodec != 'none' and acodec == 'none':
-                    is_video_only = True
+                matched_format = f
                 break
 
-        # Decide format selection and output extension/merging configuration
-        if is_video_only and ffmpeg_available:
-            format_sel = f"{format_id}+bestaudio/best"
-            logger.info(f"Format {format_id} is video-only. Merging with bestaudio using ffmpeg.")
+        is_video_only = False
+        if matched_format:
+            vcodec = matched_format.get('vcodec', 'none')
+            acodec = matched_format.get('acodec', 'none')
+            if vcodec != 'none' and acodec == 'none':
+                is_video_only = True
+
+            if is_video_only and ffmpeg_available:
+                format_sel = f"{format_id}+bestaudio/best"
+                logger.info(f"Format {format_id} is video-only. Merging with bestaudio using ffmpeg.")
+            else:
+                format_sel = format_id
+                if is_video_only and not ffmpeg_available:
+                    logger.warning(f"Format {format_id} is video-only, but ffmpeg is not available. Downloading video-only stream without audio.")
         else:
-            format_sel = format_id
-            if is_video_only and not ffmpeg_available:
-                logger.warning(f"Format {format_id} is video-only, but ffmpeg is not available. Downloading video-only stream without audio.")
+            logger.warning(f"Format {format_id} is not available for this video from the server. Falling back to default best options.")
+            if ffmpeg_available:
+                format_sel = "bestvideo+bestaudio/best"
+                is_video_only = True
+            else:
+                format_sel = "best"
 
         unique_id = str(uuid.uuid4())[:8]
         # We prefix the file name with a short unique ID to avoid collision on the server
