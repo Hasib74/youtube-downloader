@@ -170,8 +170,10 @@ def api_download():
             
             cookies_dict = YouTubeDownloader.get_cookies_dict()
             if cookies_dict:
-                cookie_str = "; ".join(f"{k}={v}" for k, v in cookies_dict.items())
-                headers["Cookie"] = cookie_str
+                user_agent = headers.get("User-Agent", headers.get("user-agent", ""))
+                if "Mozilla" in user_agent or "Safari" in user_agent or "Chrome" in user_agent:
+                    cookie_str = "; ".join(f"{k}={v}" for k, v in cookies_dict.items())
+                    headers["Cookie"] = cookie_str
 
             range_header = request.headers.get('Range')
             if range_header:
