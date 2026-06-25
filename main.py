@@ -173,11 +173,17 @@ def api_download():
                 except Exception as e:
                     logger.error(f"Error deleting file {filepath}: {e}")
         
+        import urllib.parse
+        quoted_filename = urllib.parse.quote(filename)
+        ascii_filename = filename.encode('ascii', 'ignore').decode('ascii')
+        if not ascii_filename.strip():
+            ascii_filename = "download"
+
         response = app.response_class(
             generate(),
             mimetype="application/octet-stream"
         )
-        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response.headers["Content-Disposition"] = f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{quoted_filename}'
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
         return response
     except ValueError as ve:
