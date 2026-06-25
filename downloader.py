@@ -462,9 +462,9 @@ class YouTubeDownloader:
             return False, str(e)
 
     @staticmethod
-    def get_format_url(url: str, format_id: str) -> tuple[str, str]:
+    def get_format_url(url: str, format_id: str) -> tuple[str, str, dict]:
         """
-        Gets the direct HTTP streaming URL and filename for a specific format_id of a YouTube URL.
+        Gets the direct HTTP streaming URL, filename, and request headers for a specific format_id of a YouTube URL.
         """
         ydl_opts = get_ydl_opts({'extract_flat': False})
         
@@ -486,6 +486,7 @@ class YouTubeDownloader:
                 # Replace invalid filename characters
                 clean_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()
                 filename = f"{clean_title}.{ext}"
-                return direct_url, filename
+                http_headers = f.get('http_headers') or {}
+                return direct_url, filename, http_headers
         
         raise ValueError(f"Format ID {format_id} not found for this video.")

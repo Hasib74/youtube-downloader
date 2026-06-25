@@ -179,7 +179,7 @@ def test_post_download_by_resolution_success(mock_download_by_res, client):
 @patch('main.YouTubeDownloader.get_format_url')
 @patch('httpx.Client')
 def test_download_video_stream_success(mock_client_class, mock_get_format_url, client):
-    mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4")
+    mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4", {"User-Agent": "test-agent"})
     
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -211,7 +211,7 @@ def test_download_video_stream_success(mock_client_class, mock_get_format_url, c
 @patch('main.YouTubeDownloader.get_format_url')
 @patch('httpx.Client')
 def test_download_video_stream_range_success(mock_client_class, mock_get_format_url, client):
-    mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4")
+    mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4", {"User-Agent": "test-agent"})
     
     mock_response = MagicMock()
     mock_response.status_code = 206

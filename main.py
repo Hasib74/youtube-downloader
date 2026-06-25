@@ -159,13 +159,11 @@ def api_download():
     
     if stream_param:
         try:
-            direct_url, filename = YouTubeDownloader.get_format_url(url, format_id)
+            direct_url, filename, yt_headers = YouTubeDownloader.get_format_url(url, format_id)
             
             import httpx
             
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
+            headers = dict(yt_headers)
             range_header = request.headers.get('Range')
             if range_header:
                 headers["Range"] = range_header
