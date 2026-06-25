@@ -99,7 +99,12 @@ def get_ydl_opts(extra_opts=None) -> dict:
         'no_warnings': True,
         'noplaylist': True,
         'extractor_args': get_youtube_extractor_args(has_cookies),
+        'remote_components': {'ejs:github'},
     }
+    
+    node_path = shutil.which('node')
+    if node_path:
+        opts['js_runtimes'] = {'node': {'path': node_path}}
     
     if cookiefile:
         opts['cookiefile'] = cookiefile
