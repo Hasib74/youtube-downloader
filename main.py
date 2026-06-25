@@ -161,30 +161,44 @@ def api_download():
         try:
             direct_url, filename, yt_headers = YouTubeDownloader.get_format_url(url, format_id)
             
-            import httpx
+            import urllib.request
+            import urllib.error
             
             headers = dict(yt_headers)
+            headers.pop('Host', None)
+            headers.pop('host', None)
+            
+            cookies_dict = YouTubeDownloader.get_cookies_dict()
+            if cookies_dict:
+                cookie_str = "; ".join(f"{k}={v}" for k, v in cookies_dict.items())
+                headers["Cookie"] = cookie_str
+
             range_header = request.headers.get('Range')
             if range_header:
                 headers["Range"] = range_header
                 logger.info(f"Forwarding client Range header: {range_header}")
 
-            client = httpx.Client(follow_redirects=True)
-            req = httpx.Request("GET", direct_url, headers=headers)
-            r = client.send(req, stream=True)
+            req = urllib.request.Request(direct_url, headers=headers)
+            try:
+                r = urllib.request.urlopen(req)
+            except urllib.error.HTTPError as he:
+                logger.error(f"urllib stream request failed: {he.code} - {he.reason}")
+                return jsonify({"detail": f"YouTube stream request failed: {he.code} {he.reason}"}), he.code
             
-            status_code = r.status_code
-            content_length = r.headers.get("Content-Length")
-            content_range = r.headers.get("Content-Range")
-            content_type = r.headers.get("Content-Type", "application/octet-stream")
+            status_code = r.getcode()
+            content_length = r.info().get("Content-Length")
+            content_range = r.info().get("Content-Range")
+            content_type = r.info().get("Content-Type", "application/octet-stream")
 
             def generate_stream():
                 try:
-                    for chunk in r.iter_bytes(chunk_size=16384):
+                    while True:
+                        chunk = r.read(16384)
+                        if not chunk:
+                            break
                         yield chunk
                 finally:
                     r.close()
-                    client.close()
             
             import urllib.parse
             quoted_filename = urllib.parse.quote(filename)

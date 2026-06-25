@@ -177,21 +177,22 @@ def test_post_download_by_resolution_success(mock_download_by_res, client):
     mock_download_by_res.assert_called_once()
 
 @patch('main.YouTubeDownloader.get_format_url')
-@patch('httpx.Client')
-def test_download_video_stream_success(mock_client_class, mock_get_format_url, client):
+@patch('urllib.request.urlopen')
+def test_download_video_stream_success(mock_urlopen, mock_get_format_url, client):
     mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4", {"User-Agent": "test-agent"})
     
     mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.headers = {
+    mock_response.getcode.return_value = 200
+    
+    mock_info = MagicMock()
+    mock_info.get.side_effect = lambda key, default=None: {
         "Content-Length": "100",
         "Content-Type": "video/mp4"
-    }
-    mock_response.iter_bytes.return_value = [b"chunk1", b"chunk2"]
+    }.get(key, default)
+    mock_response.info.return_value = mock_info
     
-    mock_client = MagicMock()
-    mock_client.send.return_value = mock_response
-    mock_client_class.return_value = mock_client
+    mock_response.read.side_effect = [b"chunk1", b"chunk2", b""]
+    mock_urlopen.return_value = mock_response
     
     url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     format_id = "18"
@@ -206,25 +207,26 @@ def test_download_video_stream_success(mock_client_class, mock_get_format_url, c
     assert "filename*=UTF-8''stream_video.mp4" in response.headers["content-disposition"]
     
     mock_get_format_url.assert_called_once_with(url, format_id)
-    mock_client.send.assert_called_once()
+    mock_urlopen.assert_called_once()
 
 @patch('main.YouTubeDownloader.get_format_url')
-@patch('httpx.Client')
-def test_download_video_stream_range_success(mock_client_class, mock_get_format_url, client):
+@patch('urllib.request.urlopen')
+def test_download_video_stream_range_success(mock_urlopen, mock_get_format_url, client):
     mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4", {"User-Agent": "test-agent"})
     
     mock_response = MagicMock()
-    mock_response.status_code = 206
-    mock_response.headers = {
+    mock_response.getcode.return_value = 206
+    
+    mock_info = MagicMock()
+    mock_info.get.side_effect = lambda key, default=None: {
         "Content-Length": "50",
         "Content-Range": "bytes 0-49/100",
         "Content-Type": "video/mp4"
-    }
-    mock_response.iter_bytes.return_value = [b"chunk_partial"]
+    }.get(key, default)
+    mock_response.info.return_value = mock_info
     
-    mock_client = MagicMock()
-    mock_client.send.return_value = mock_response
-    mock_client_class.return_value = mock_client
+    mock_response.read.side_effect = [b"chunk_partial", b""]
+    mock_urlopen.return_value = mock_response
     
     url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     format_id = "18"
@@ -240,6 +242,6 @@ def test_download_video_stream_range_success(mock_client_class, mock_get_format_
     assert response.headers["Content-Range"] == "bytes 0-49/100"
     assert response.headers["Content-Type"] == "video/mp4"
     
-    mock_client.send.assert_called_once()
-    called_request = mock_client.send.call_args[0][0]
-    assert called_request.headers["Range"] == "bytes=0-49"
+    mock_urlopen.assert_called_once()
+    called_args = mock_urlopen.call_args[0][0]
+    assert called_args.headers["Range"] == "bytes=0-49"
