@@ -490,3 +490,25 @@ class YouTubeDownloader:
                 return direct_url, filename, http_headers
         
         raise ValueError(f"Format ID {format_id} not found for this video.")
+
+    @staticmethod
+    def get_cookies_dict() -> dict:
+        """
+        Parses the Netscape cookies file (from local file or YT_COOKIES env)
+        and returns a dictionary of cookie name-value pairs.
+        """
+        import http.cookiejar
+        cookiefile = get_cookie_file()
+        if not cookiefile:
+            return {}
+        
+        cookie_dict = {}
+        try:
+            cj = http.cookiejar.MozillaCookieJar(cookiefile)
+            cj.load(ignore_discard=True, ignore_expires=True)
+            for cookie in cj:
+                cookie_dict[cookie.name] = cookie.value
+        except Exception as e:
+            logger.error(f"Error parsing cookies file: {e}")
+        return cookie_dict
+
