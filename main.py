@@ -267,6 +267,30 @@ def api_download():
         logger.error(f"Unexpected error in /api/download: {e}")
         return jsonify({"detail": f"An error occurred during the download: {str(e)}"}), 500
 
+@app.route('/api/test-extraction', methods=['GET'])
+def api_test_extraction():
+    url = request.args.get('url', 'https://www.youtube.com/watch?v=zQl7zYkEP6M')
+    client = request.args.get('client', 'android')
+    
+    import yt_dlp
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': False,
+        'noplaylist': True,
+        'extractor_args': {'youtube': {'player_client': [client]}},
+    }
+    import shutil
+    node_path = shutil.which('node') or shutil.which('nodejs')
+    if node_path:
+        ydl_opts['js_runtimes'] = {'node': {'path': node_path}}
+        
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return jsonify({"status": "success", "formats_count": len(info.get('formats', []))})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "node_path": node_path})
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8000))
     app.run(debug=False, host="0.0.0.0", port=port)
