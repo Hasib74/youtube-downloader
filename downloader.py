@@ -68,12 +68,10 @@ def get_cookie_file():
 def get_youtube_extractor_args(has_cookies: bool = False) -> dict:
     yt_args = {}
     
-    # If cookies are present, we MUST prioritize/use 'web' or 'mweb' client.
-    # Mobile clients like 'android' or 'ios' ignore web cookies, leading to bot check failures.
-    if has_cookies:
-        yt_args['player_client'] = ['web', 'mweb']
-    else:
-        yt_args['player_client'] = ['android', 'ios', 'web']
+    # Prioritize mobile clients (android, ios) as they are much less likely to be blocked by bot detection.
+    # Fall back to web/mweb clients so that if cookies are needed (e.g. for age-gate/private videos),
+    # yt-dlp can fall back and use the cookies correctly.
+    yt_args['player_client'] = ['android', 'ios', 'web', 'mweb']
     
     po_token = os.environ.get("YT_PO_TOKEN")
     visitor_data = os.environ.get("YT_VISITOR_DATA")
