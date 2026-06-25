@@ -12,3 +12,7 @@ env/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Private files
+cookies.txt
+downloads/
