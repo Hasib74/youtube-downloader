@@ -100,7 +100,7 @@ def get_ydl_opts(extra_opts=None) -> dict:
         'remote_components': {'ejs:github'},
     }
     
-    node_path = shutil.which('node')
+    node_path = shutil.which('node') or shutil.which('nodejs')
     if node_path:
         opts['js_runtimes'] = {'node': {'path': node_path}}
     
