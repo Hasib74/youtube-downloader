@@ -175,3 +175,34 @@ def test_post_download_by_resolution_success(mock_download_by_res, client):
     assert "downloaded successfully" in data["message"]
     # Verify parameter passing
     mock_download_by_res.assert_called_once()
+
+@patch('main.YouTubeDownloader.get_format_url')
+@patch('httpx.stream')
+def test_download_video_stream_success(mock_httpx_stream, mock_get_format_url, client):
+    mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4")
+    
+    class MockResponse:
+        def raise_for_status(self):
+            pass
+        def iter_bytes(self, chunk_size=None):
+            yield b"dummy stream chunk 1"
+            yield b"dummy stream chunk 2"
+            
+    class MockContextManager:
+        def __enter__(self):
+            return MockResponse()
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    mock_httpx_stream.return_value = MockContextManager()
+    
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    format_id = "18"
+    
+    response = client.get(f"/api/download?url={url}&format_id={format_id}&stream=true")
+    
+    assert response.status_code == 200
+    assert response.data == b"dummy stream chunk 1dummy stream chunk 2"
+    assert "content-disposition" in response.headers
+    assert "filename*=UTF-8''stream_video.mp4" in response.headers["content-disposition"]
+    mock_get_format_url.assert_called_once_with(url, format_id)

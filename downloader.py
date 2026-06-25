@@ -455,3 +455,32 @@ class YouTubeDownloader:
         except Exception as e:
             logger.error(f"Download by resolution failed: {e}")
             return False, str(e)
+
+    @staticmethod
+    def get_format_url(url: str, format_id: str) -> tuple[str, str]:
+        """
+        Gets the direct HTTP streaming URL and filename for a specific format_id of a YouTube URL.
+        """
+        ydl_opts = get_ydl_opts({'extract_flat': False})
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=False)
+            except Exception as e:
+                logger.error(f"Failed to fetch video info for streaming: {e}")
+                raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+
+        formats = info.get('formats', [])
+        for f in formats:
+            if f.get('format_id') == format_id:
+                direct_url = f.get('url')
+                if not direct_url:
+                    raise ValueError(f"Format ID {format_id} does not have a direct play URL.")
+                ext = f.get('ext', 'mp4')
+                title = info.get('title', 'video')
+                # Replace invalid filename characters
+                clean_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()
+                filename = f"{clean_title}.{ext}"
+                return direct_url, filename
+        
+        raise ValueError(f"Format ID {format_id} not found for this video.")

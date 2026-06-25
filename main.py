@@ -152,10 +152,45 @@ def api_info():
 def api_download():
     url = request.args.get('url')
     format_id = request.args.get('format_id')
+    stream_param = request.args.get('stream', 'false').lower() == 'true'
     
     if not url or not url.strip() or not format_id or not format_id.strip():
         return jsonify({"detail": "URL and format_id parameters are required."}), 400
     
+    if stream_param:
+        try:
+            direct_url, filename = YouTubeDownloader.get_format_url(url, format_id)
+            
+            import httpx
+            
+            def generate_stream():
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                }
+                with httpx.stream("GET", direct_url, headers=headers, follow_redirects=True) as r:
+                    r.raise_for_status()
+                    for chunk in r.iter_bytes(chunk_size=16384):
+                        yield chunk
+            
+            import urllib.parse
+            quoted_filename = urllib.parse.quote(filename)
+            ascii_filename = filename.encode('ascii', 'ignore').decode('ascii')
+            if not ascii_filename.strip():
+                ascii_filename = "download"
+
+            response = app.response_class(
+                generate_stream(),
+                mimetype="application/octet-stream"
+            )
+            response.headers["Content-Disposition"] = f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{quoted_filename}'
+            response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+            return response
+        except ValueError as ve:
+            return jsonify({"detail": str(ve)}), 400
+        except Exception as e:
+            logger.error(f"Unexpected error in stream proxy: {e}")
+            return jsonify({"detail": f"An error occurred during direct streaming: {str(e)}"}), 500
+
     try:
         filepath, filename = YouTubeDownloader.download_format(url, format_id)
         
