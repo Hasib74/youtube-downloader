@@ -1,7 +1,7 @@
 import os
 import tempfile
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from main import app
 
 @pytest.fixture
@@ -177,24 +177,21 @@ def test_post_download_by_resolution_success(mock_download_by_res, client):
     mock_download_by_res.assert_called_once()
 
 @patch('main.YouTubeDownloader.get_format_url')
-@patch('httpx.stream')
-def test_download_video_stream_success(mock_httpx_stream, mock_get_format_url, client):
+@patch('httpx.Client')
+def test_download_video_stream_success(mock_client_class, mock_get_format_url, client):
     mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4")
     
-    class MockResponse:
-        def raise_for_status(self):
-            pass
-        def iter_bytes(self, chunk_size=None):
-            yield b"dummy stream chunk 1"
-            yield b"dummy stream chunk 2"
-            
-    class MockContextManager:
-        def __enter__(self):
-            return MockResponse()
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            pass
-
-    mock_httpx_stream.return_value = MockContextManager()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {
+        "Content-Length": "100",
+        "Content-Type": "video/mp4"
+    }
+    mock_response.iter_bytes.return_value = [b"chunk1", b"chunk2"]
+    
+    mock_client = MagicMock()
+    mock_client.send.return_value = mock_response
+    mock_client_class.return_value = mock_client
     
     url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     format_id = "18"
@@ -202,7 +199,47 @@ def test_download_video_stream_success(mock_httpx_stream, mock_get_format_url, c
     response = client.get(f"/api/download?url={url}&format_id={format_id}&stream=true")
     
     assert response.status_code == 200
-    assert response.data == b"dummy stream chunk 1dummy stream chunk 2"
-    assert "content-disposition" in response.headers
+    assert response.data == b"chunk1chunk2"
+    assert response.headers["Content-Length"] == "100"
+    assert response.headers["Content-Type"] == "video/mp4"
+    assert response.headers["Accept-Ranges"] == "bytes"
     assert "filename*=UTF-8''stream_video.mp4" in response.headers["content-disposition"]
+    
     mock_get_format_url.assert_called_once_with(url, format_id)
+    mock_client.send.assert_called_once()
+
+@patch('main.YouTubeDownloader.get_format_url')
+@patch('httpx.Client')
+def test_download_video_stream_range_success(mock_client_class, mock_get_format_url, client):
+    mock_get_format_url.return_value = ("https://direct-url.com", "stream_video.mp4")
+    
+    mock_response = MagicMock()
+    mock_response.status_code = 206
+    mock_response.headers = {
+        "Content-Length": "50",
+        "Content-Range": "bytes 0-49/100",
+        "Content-Type": "video/mp4"
+    }
+    mock_response.iter_bytes.return_value = [b"chunk_partial"]
+    
+    mock_client = MagicMock()
+    mock_client.send.return_value = mock_response
+    mock_client_class.return_value = mock_client
+    
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    format_id = "18"
+    
+    response = client.get(
+        f"/api/download?url={url}&format_id={format_id}&stream=true",
+        headers={"Range": "bytes=0-49"}
+    )
+    
+    assert response.status_code == 206
+    assert response.data == b"chunk_partial"
+    assert response.headers["Content-Length"] == "50"
+    assert response.headers["Content-Range"] == "bytes 0-49/100"
+    assert response.headers["Content-Type"] == "video/mp4"
+    
+    mock_client.send.assert_called_once()
+    called_request = mock_client.send.call_args[0][0]
+    assert called_request.headers["Range"] == "bytes=0-49"

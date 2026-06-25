@@ -163,14 +163,30 @@ def api_download():
             
             import httpx
             
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            range_header = request.headers.get('Range')
+            if range_header:
+                headers["Range"] = range_header
+                logger.info(f"Forwarding client Range header: {range_header}")
+
+            client = httpx.Client(follow_redirects=True)
+            req = httpx.Request("GET", direct_url, headers=headers)
+            r = client.send(req, stream=True)
+            
+            status_code = r.status_code
+            content_length = r.headers.get("Content-Length")
+            content_range = r.headers.get("Content-Range")
+            content_type = r.headers.get("Content-Type", "application/octet-stream")
+
             def generate_stream():
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-                }
-                with httpx.stream("GET", direct_url, headers=headers, follow_redirects=True) as r:
-                    r.raise_for_status()
+                try:
                     for chunk in r.iter_bytes(chunk_size=16384):
                         yield chunk
+                finally:
+                    r.close()
+                    client.close()
             
             import urllib.parse
             quoted_filename = urllib.parse.quote(filename)
@@ -180,10 +196,18 @@ def api_download():
 
             response = app.response_class(
                 generate_stream(),
-                mimetype="application/octet-stream"
+                status=status_code,
+                mimetype=content_type
             )
             response.headers["Content-Disposition"] = f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{quoted_filename}'
             response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+            response.headers["Accept-Ranges"] = "bytes"
+            
+            if content_length:
+                response.headers["Content-Length"] = content_length
+            if content_range:
+                response.headers["Content-Range"] = content_range
+                
             return response
         except ValueError as ve:
             return jsonify({"detail": str(ve)}), 400
