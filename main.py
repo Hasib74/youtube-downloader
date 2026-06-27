@@ -301,6 +301,10 @@ def api_test_verbose():
     
     cmd = [sys.executable, "-m", "yt_dlp", "-v", url]
     
+    client = request.args.get('client')
+    if client:
+        cmd.extend(["--extractor-args", f"youtube:player_client={client}"])
+    
     # Check if local cookies exist
     local_cookies = os.path.join(os.path.dirname(__file__), "cookies.txt")
     if os.path.exists(local_cookies):
