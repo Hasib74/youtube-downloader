@@ -123,8 +123,8 @@ class YouTubeDownloader:
     @staticmethod
     def _run_ytdl_with_fallback(ydl_opts: dict, action_fn) -> any:
         """
-        Executes a yt-dlp action function with the given options, and retries
-        without player_client restriction if it fails with 'Requested format is not available'.
+        Executes a yt-dlp action function with the given options. If it fails with
+        'Requested format is not available', it toggles the player_client restriction and retries.
         """
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -132,13 +132,23 @@ class YouTubeDownloader:
             except Exception as e:
                 error_msg = str(e)
                 if "Requested format is not available" in error_msg:
-                    logger.warning(f"Operation failed with format restriction. Retrying without player_client: {e}")
+                    logger.warning(f"Operation failed with format restriction. Retrying with toggled player_client: {e}")
                     relaxed_opts = dict(ydl_opts)
-                    if 'extractor_args' in relaxed_opts:
-                        relaxed_opts['extractor_args'] = dict(relaxed_opts['extractor_args'])
-                        if 'youtube' in relaxed_opts['extractor_args']:
-                            relaxed_opts['extractor_args']['youtube'] = dict(relaxed_opts['extractor_args']['youtube'])
-                            relaxed_opts['extractor_args']['youtube'].pop('player_client', None)
+                    
+                    # Safely copy and traverse the extractor_args dictionary structure
+                    extractor_args = dict(relaxed_opts.get('extractor_args', {}))
+                    youtube_args = dict(extractor_args.get('youtube', {}))
+                    
+                    if 'player_client' in youtube_args:
+                        # Case 1: player_client restriction was present, remove it to try defaults
+                        youtube_args.pop('player_client', None)
+                    else:
+                        # Case 2: player_client restriction was absent, add it to prioritize mobile clients
+                        youtube_args['player_client'] = ['android', 'ios', 'web', 'mweb']
+                        
+                    extractor_args['youtube'] = youtube_args
+                    relaxed_opts['extractor_args'] = extractor_args
+                    
                     with yt_dlp.YoutubeDL(relaxed_opts) as ydl2:
                         return action_fn(ydl2)
                 raise

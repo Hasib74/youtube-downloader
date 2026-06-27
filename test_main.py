@@ -264,3 +264,30 @@ def test_safe_extract_info_fallback(mock_ytdl_class):
     
     assert info["formats"][0]["format_id"] == "18"
     assert mock_ytdl_class.call_count == 2
+
+@patch('yt_dlp.YoutubeDL')
+@patch('downloader.get_cookie_file')
+def test_safe_extract_info_fallback_toggle_add(mock_get_cookie_file, mock_ytdl_class):
+    from downloader import YouTubeDownloader
+    
+    mock_get_cookie_file.return_value = "/mock/path/cookies.txt"
+    
+    mock_instance_first = MagicMock()
+    mock_instance_first.__enter__.return_value.extract_info.side_effect = Exception("Requested format is not available")
+    
+    mock_instance_second = MagicMock()
+    mock_instance_second.__enter__.return_value.extract_info.return_value = {"formats": [{"format_id": "18", "ext": "mp4", "vcodec": "avc", "acodec": "mp4a"}]}
+    
+    mock_ytdl_class.side_effect = [mock_instance_first, mock_instance_second]
+    
+    url = "https://www.youtube.com/watch?v=UlacMvx_VYk"
+    info = YouTubeDownloader._safe_extract_info(url)
+    
+    assert info["formats"][0]["format_id"] == "18"
+    assert mock_ytdl_class.call_count == 2
+    
+    first_call_opts = mock_ytdl_class.call_args_list[0][0][0]
+    second_call_opts = mock_ytdl_class.call_args_list[1][0][0]
+    
+    assert 'player_client' not in first_call_opts.get('extractor_args', {}).get('youtube', {})
+    assert second_call_opts.get('extractor_args', {}).get('youtube', {}).get('player_client') == ['android', 'ios', 'web', 'mweb']
