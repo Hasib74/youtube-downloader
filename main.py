@@ -55,6 +55,7 @@ def api_debug():
         }
         
     local_cookies_exists = os.path.exists(os.path.join(os.path.dirname(__file__), "cookies.txt"))
+    cookie_diagnostics = YouTubeDownloader.check_cookies_status()
     
     return jsonify({
         "python_version": sys.version,
@@ -65,6 +66,7 @@ def api_debug():
         "deno_available": shutil.which('deno') is not None,
         "YT_COOKIES": cookie_info,
         "local_cookies_txt_exists": local_cookies_exists,
+        "cookie_diagnostics": cookie_diagnostics,
         "YT_PO_TOKEN_exists": os.environ.get("YT_PO_TOKEN") is not None,
         "YT_VISITOR_DATA_exists": os.environ.get("YT_VISITOR_DATA") is not None,
         "YT_PROXY_exists": os.environ.get("YT_PROXY") is not None,

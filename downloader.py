@@ -124,16 +124,27 @@ class YouTubeDownloader:
     def _run_ytdl_with_fallback(ydl_opts: dict, action_fn) -> any:
         """
         Executes a yt-dlp action function with the given options. If it fails with
-        'Requested format is not available', it toggles the player_client restriction,
-        removes the cookiefile, and retries.
+        'Requested format is not available' or bot detection/sign-in blocks, it 
+        toggles the player_client restriction, removes the cookiefile, and retries.
         """
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 return action_fn(ydl)
             except Exception as e:
                 error_msg = str(e)
-                if "Requested format is not available" in error_msg:
-                    logger.warning(f"Operation failed with format restriction. Retrying with toggled player_client and no cookies: {e}")
+                is_format_error = "Requested format is not available" in error_msg
+                is_bot_block = any(pattern in error_msg.lower() for pattern in [
+                    "confirm you are not a bot", 
+                    "sign in to confirm", 
+                    "http error 403", 
+                    "forbidden"
+                ])
+                
+                if is_format_error or is_bot_block:
+                    logger.warning(
+                        f"Operation failed (format/bot restriction). Retrying with toggled player_client and no cookies. "
+                        f"Reason: {error_msg}"
+                    )
                     relaxed_opts = dict(ydl_opts)
                     
                     # 1. Remove cookies on retry to prevent invalid/expired cookies or cookie-client conflicts
@@ -164,7 +175,15 @@ class YouTubeDownloader:
             return YouTubeDownloader._run_ytdl_with_fallback(ydl_opts, lambda ydl: ydl.extract_info(url, download=False))
         except Exception as e:
             logger.error(f"Failed to fetch video info: {e}")
-            raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+            err_msg = str(e)
+            if any(pattern in err_msg.lower() for pattern in ["confirm you are not a bot", "sign in to confirm", "403: forbidden"]):
+                raise ValueError(
+                    "YouTube blocked the request (Bot detection/Sign-in required). "
+                    "To resolve permanently: 1) Update cookies.txt or YT_COOKIES environment variable, "
+                    "2) Configure a proxy via YT_PROXY, or 3) Set YT_PO_TOKEN and YT_VISITOR_DATA environment variables. "
+                    f"Original error: {err_msg}"
+                )
+            raise ValueError(f"Could not retrieve video information. Details: {err_msg}")
 
     @staticmethod
     def get_video_info(url: str) -> dict:
@@ -520,4 +539,58 @@ class YouTubeDownloader:
         except Exception as e:
             logger.error(f"Error parsing cookies file: {e}")
         return cookie_dict
+
+    @staticmethod
+    def check_cookies_status() -> dict:
+        """
+        Checks cookies.txt status (existence, expiration dates).
+        Returns a dict with diagnostic info.
+        """
+        import time
+        import http.cookiejar
+        cookiefile = get_cookie_file()
+        if not cookiefile:
+            return {"status": "missing", "message": "No cookies.txt or YT_COOKIES environment variable found."}
+        
+        expired_count = 0
+        valid_count = 0
+        min_expiry = float('inf')
+        now = time.time()
+        
+        try:
+            cj = http.cookiejar.MozillaCookieJar(cookiefile)
+            cj.load(ignore_discard=True, ignore_expires=True)
+            for cookie in cj:
+                if cookie.expires:
+                    if cookie.expires < now:
+                        expired_count += 1
+                    else:
+                        valid_count += 1
+                        if cookie.expires < min_expiry:
+                            min_expiry = cookie.expires
+                else:
+                    valid_count += 1 # Session cookie
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to parse cookies: {e}"}
+            
+        if valid_count == 0 and expired_count > 0:
+            return {
+                "status": "expired",
+                "message": f"All {expired_count} cookies are expired. Please refresh your cookies.txt."
+            }
+        
+        expiry_message = ""
+        if min_expiry != float('inf'):
+            days_left = int((min_expiry - now) / 86400)
+            if days_left <= 0:
+                expiry_message = "Some cookies expire today."
+            else:
+                expiry_message = f"Earliest cookie expires in {days_left} days."
+                
+        return {
+            "status": "valid" if valid_count > 0 else "unknown",
+            "valid_cookies": valid_count,
+            "expired_cookies": expired_count,
+            "message": f"Found {valid_count} valid cookies and {expired_count} expired cookies. {expiry_message}".strip()
+        }
 
