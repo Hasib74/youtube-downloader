@@ -121,19 +121,44 @@ def get_ydl_opts(extra_opts=None) -> dict:
 
 class YouTubeDownloader:
     @staticmethod
+    def _run_ytdl_with_fallback(ydl_opts: dict, action_fn) -> any:
+        """
+        Executes a yt-dlp action function with the given options, and retries
+        without player_client restriction if it fails with 'Requested format is not available'.
+        """
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                return action_fn(ydl)
+            except Exception as e:
+                error_msg = str(e)
+                if "Requested format is not available" in error_msg:
+                    logger.warning(f"Operation failed with format restriction. Retrying without player_client: {e}")
+                    relaxed_opts = dict(ydl_opts)
+                    if 'extractor_args' in relaxed_opts:
+                        relaxed_opts['extractor_args'] = dict(relaxed_opts['extractor_args'])
+                        if 'youtube' in relaxed_opts['extractor_args']:
+                            relaxed_opts['extractor_args']['youtube'] = dict(relaxed_opts['extractor_args']['youtube'])
+                            relaxed_opts['extractor_args']['youtube'].pop('player_client', None)
+                    with yt_dlp.YoutubeDL(relaxed_opts) as ydl2:
+                        return action_fn(ydl2)
+                raise
+
+    @staticmethod
+    def _safe_extract_info(url: str) -> dict:
+        ydl_opts = get_ydl_opts({'extract_flat': False})
+        try:
+            return YouTubeDownloader._run_ytdl_with_fallback(ydl_opts, lambda ydl: ydl.extract_info(url, download=False))
+        except Exception as e:
+            logger.error(f"Failed to fetch video info: {e}")
+            raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+
+    @staticmethod
     def get_video_info(url: str) -> dict:
         """
         Extracts metadata and formats for a given YouTube URL.
         """
-        ydl_opts = get_ydl_opts({'extract_flat': False})
+        info = YouTubeDownloader._safe_extract_info(url)
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-            except Exception as e:
-                logger.error(f"Failed to fetch video info: {e}")
-                raise ValueError(f"Could not retrieve video information. Please check the URL. Details: {str(e)}")
-
         formats = info.get('formats', [])
         
         # We will categorize formats into three lists:
@@ -240,13 +265,7 @@ class YouTubeDownloader:
         ffmpeg_available = shutil.which('ffmpeg') is not None or shutil.which('ffprobe') is not None
 
         # Fetch metadata first to check if format is video-only
-        ydl_opts_info = get_ydl_opts({'extract_flat': False})
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-            except Exception as e:
-                logger.error(f"Failed to fetch video info for download: {e}")
-                raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+        info = YouTubeDownloader._safe_extract_info(url)
 
         # Check if requested format_id is available
         formats = info.get('formats', [])
@@ -290,13 +309,11 @@ class YouTubeDownloader:
             ydl_opts_config['merge_output_format'] = 'mp4'
 
         ydl_opts = get_ydl_opts(ydl_opts_config)
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=True)
-            except Exception as e:
-                logger.error(f"Download failed: {e}")
-                raise ValueError(f"Download failed. Details: {str(e)}")
+        try:
+            info = YouTubeDownloader._run_ytdl_with_fallback(ydl_opts, lambda ydl: ydl.extract_info(url, download=True))
+        except Exception as e:
+            logger.error(f"Download failed: {e}")
+            raise ValueError(f"Download failed. Details: {str(e)}")
             
             # Find the actual filepath of the downloaded file.
             filename = ydl.prepare_filename(info)
@@ -324,14 +341,7 @@ class YouTubeDownloader:
         """
         Extracts simple metadata for a given YouTube URL.
         """
-        ydl_opts = get_ydl_opts({'extract_flat': False})
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-            except Exception as e:
-                logger.error(f"Failed to fetch video info: {e}")
-                raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+        info = YouTubeDownloader._safe_extract_info(url)
 
         # Format upload_date (YYYYMMDD to YYYY-MM-DD)
         upload_date = info.get('upload_date')
@@ -354,14 +364,7 @@ class YouTubeDownloader:
         """
         Extracts available progressive and adaptive resolutions for a YouTube URL.
         """
-        ydl_opts = get_ydl_opts({'extract_flat': False})
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-            except Exception as e:
-                logger.error(f"Failed to fetch video info: {e}")
-                raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+        info = YouTubeDownloader._safe_extract_info(url)
 
         formats = info.get('formats', [])
         progressive_resolutions = set()
@@ -403,10 +406,7 @@ class YouTubeDownloader:
         """
         try:
             # 1. Fetch metadata first to get video_id
-            ydl_opts_info = get_ydl_opts({'extract_flat': False})
-            
-            with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-                info = ydl.extract_info(url, download=False)
+            info = YouTubeDownloader._safe_extract_info(url)
             
             video_id = info.get('id', 'unknown')
             out_dir = os.path.join(base_download_dir, video_id)
@@ -452,9 +452,7 @@ class YouTubeDownloader:
                 ydl_opts_config['merge_output_format'] = 'mp4'
                 
             ydl_opts = get_ydl_opts(ydl_opts_config)
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            YouTubeDownloader._run_ytdl_with_fallback(ydl_opts, lambda ydl: ydl.download([url]))
 
             return True, None
         except Exception as e:
@@ -466,14 +464,7 @@ class YouTubeDownloader:
         """
         Gets the direct HTTP streaming URL, filename, and request headers for a specific format_id of a YouTube URL.
         """
-        ydl_opts = get_ydl_opts({'extract_flat': False})
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-            except Exception as e:
-                logger.error(f"Failed to fetch video info for streaming: {e}")
-                raise ValueError(f"Could not retrieve video information. Details: {str(e)}")
+        info = YouTubeDownloader._safe_extract_info(url)
 
         formats = info.get('formats', [])
         for f in formats:

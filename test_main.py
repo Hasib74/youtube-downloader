@@ -245,3 +245,22 @@ def test_download_video_stream_range_success(mock_urlopen, mock_get_format_url, 
     mock_urlopen.assert_called_once()
     called_args = mock_urlopen.call_args[0][0]
     assert called_args.headers["Range"] == "bytes=0-49"
+
+@patch('yt_dlp.YoutubeDL')
+def test_safe_extract_info_fallback(mock_ytdl_class):
+    from downloader import YouTubeDownloader
+    
+    # Setup mock instances for first try (failure) and second try (success)
+    mock_instance_first = MagicMock()
+    mock_instance_first.__enter__.return_value.extract_info.side_effect = Exception("Requested format is not available. Use --list-formats for a list of available formats")
+    
+    mock_instance_second = MagicMock()
+    mock_instance_second.__enter__.return_value.extract_info.return_value = {"formats": [{"format_id": "18", "ext": "mp4", "vcodec": "avc", "acodec": "mp4a"}]}
+    
+    mock_ytdl_class.side_effect = [mock_instance_first, mock_instance_second]
+    
+    url = "https://www.youtube.com/watch?v=UlacMvx_VYk"
+    info = YouTubeDownloader._safe_extract_info(url)
+    
+    assert info["formats"][0]["format_id"] == "18"
+    assert mock_ytdl_class.call_count == 2
