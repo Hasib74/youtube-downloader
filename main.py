@@ -304,7 +304,7 @@ def api_test_verbose():
     # Check if local cookies exist
     local_cookies = os.path.join(os.path.dirname(__file__), "cookies.txt")
     if os.path.exists(local_cookies):
-        cmd.extend(["--cookiefile", local_cookies])
+        cmd.extend(["--cookies", local_cookies])
         
     proxy = os.environ.get("YT_PROXY")
     if proxy:
