@@ -293,38 +293,6 @@ def api_test_extraction():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e), "node_path": node_path})
 
-@app.route('/api/test-verbose', methods=['GET'])
-def api_test_verbose():
-    url = request.args.get('url', 'https://www.youtube.com/watch?v=UlacMvx_VYk')
-    import subprocess
-    import sys
-    
-    cmd = [sys.executable, "-m", "yt_dlp", "-v", url]
-    
-    client = request.args.get('client')
-    if client:
-        cmd.extend(["--extractor-args", f"youtube:player_client={client}"])
-    
-    # Check if local cookies exist
-    local_cookies = os.path.join(os.path.dirname(__file__), "cookies.txt")
-    if os.path.exists(local_cookies):
-        cmd.extend(["--cookies", local_cookies])
-        
-    proxy = os.environ.get("YT_PROXY")
-    if proxy:
-        cmd.extend(["--proxy", proxy])
-        
-    try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
-        return jsonify({
-            "stdout": res.stdout,
-            "stderr": res.stderr,
-            "returncode": res.returncode,
-            "cmd": cmd
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8000))
     app.run(debug=False, host="0.0.0.0", port=port)
