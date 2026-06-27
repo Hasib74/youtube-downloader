@@ -291,3 +291,6 @@ def test_safe_extract_info_fallback_toggle_add(mock_get_cookie_file, mock_ytdl_c
     
     assert 'player_client' not in first_call_opts.get('extractor_args', {}).get('youtube', {})
     assert second_call_opts.get('extractor_args', {}).get('youtube', {}).get('player_client') == ['android', 'ios', 'web', 'mweb']
+    
+    assert first_call_opts.get('cookiefile') == "/mock/path/cookies.txt"
+    assert 'cookiefile' not in second_call_opts

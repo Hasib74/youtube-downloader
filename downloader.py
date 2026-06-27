@@ -124,7 +124,8 @@ class YouTubeDownloader:
     def _run_ytdl_with_fallback(ydl_opts: dict, action_fn) -> any:
         """
         Executes a yt-dlp action function with the given options. If it fails with
-        'Requested format is not available', it toggles the player_client restriction and retries.
+        'Requested format is not available', it toggles the player_client restriction,
+        removes the cookiefile, and retries.
         """
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -132,10 +133,13 @@ class YouTubeDownloader:
             except Exception as e:
                 error_msg = str(e)
                 if "Requested format is not available" in error_msg:
-                    logger.warning(f"Operation failed with format restriction. Retrying with toggled player_client: {e}")
+                    logger.warning(f"Operation failed with format restriction. Retrying with toggled player_client and no cookies: {e}")
                     relaxed_opts = dict(ydl_opts)
                     
-                    # Safely copy and traverse the extractor_args dictionary structure
+                    # 1. Remove cookies on retry to prevent invalid/expired cookies or cookie-client conflicts
+                    relaxed_opts.pop('cookiefile', None)
+                    
+                    # 2. Safely copy and traverse the extractor_args dictionary structure
                     extractor_args = dict(relaxed_opts.get('extractor_args', {}))
                     youtube_args = dict(extractor_args.get('youtube', {}))
                     
