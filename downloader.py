@@ -323,32 +323,36 @@ class YouTubeDownloader:
             ydl_opts_config['merge_output_format'] = 'mp4'
 
         ydl_opts = get_ydl_opts(ydl_opts_config)
+        def action(ydl):
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            return info, filename
+
         try:
-            info = YouTubeDownloader._run_ytdl_with_fallback(ydl_opts, lambda ydl: ydl.extract_info(url, download=True))
+            info, filename = YouTubeDownloader._run_ytdl_with_fallback(ydl_opts, action)
         except Exception as e:
             logger.error(f"Download failed: {e}")
             raise ValueError(f"Download failed. Details: {str(e)}")
             
-            # Find the actual filepath of the downloaded file.
-            filename = ydl.prepare_filename(info)
-            actual_filepath = filename
+        # Find the actual filepath of the downloaded file.
+        actual_filepath = filename
 
-            if not os.path.exists(actual_filepath):
-                # 1. Check if the file has been renamed/merged (e.g., info['requested_downloads'])
-                req_downloads = info.get('requested_downloads', [])
-                if req_downloads and os.path.exists(req_downloads[0].get('filepath', '')):
-                    actual_filepath = req_downloads[0]['filepath']
-                else:
-                    # 2. Scan the temp directory for files matching the unique_id
-                    for f in os.listdir(download_dir):
-                        if f.startswith(f"ytdl_{unique_id}"):
-                            actual_filepath = os.path.join(download_dir, f)
-                            break
-            
-            if not os.path.exists(actual_filepath):
-                raise FileNotFoundError(f"Could not locate the downloaded file on the server.")
+        if not os.path.exists(actual_filepath):
+            # 1. Check if the file has been renamed/merged (e.g., info['requested_downloads'])
+            req_downloads = info.get('requested_downloads', [])
+            if req_downloads and os.path.exists(req_downloads[0].get('filepath', '')):
+                actual_filepath = req_downloads[0]['filepath']
+            else:
+                # 2. Scan the temp directory for files matching the unique_id
+                for f in os.listdir(download_dir):
+                    if f.startswith(f"ytdl_{unique_id}"):
+                        actual_filepath = os.path.join(download_dir, f)
+                        break
+        
+        if not os.path.exists(actual_filepath):
+            raise FileNotFoundError(f"Could not locate the downloaded file on the server.")
 
-            return actual_filepath, os.path.basename(actual_filepath)
+        return actual_filepath, os.path.basename(actual_filepath)
 
     @staticmethod
     def get_video_info_simple(url: str) -> dict:
